@@ -1,0 +1,1155 @@
+library(nflscrapR)
+library(nflfastR)
+library(nflreadr)
+library(nflplotR)
+library(nflverse)
+library(tidyverse)
+library(dplyr)
+
+seasons <- 1999:2021
+pbp_Original <- nflfastR::load_pbp(seasons)
+
+pbp_Original <- pbp_Original %>% 
+  mutate_at(vars(home_team, away_team, posteam, defteam, td_team, side_of_field), funs(case_when(
+    . %in% "JAC" ~ "JAX",
+    . %in% "STL" ~ "LAR",
+    . %in% "LA" ~ "LAR",
+    . %in% "SD" ~ "LAC",
+    . %in% "OAK" ~ "LV",
+    TRUE ~ .
+  ))) 
+
+pbp_Original$play_id <- 1:nrow(pbp_Original)
+pbp <- pbp_Original
+rm(pbp_Original) # this is to conserve memory
+
+ShouldBeLabeledNoPlay <- pbp %>% filter(timeout == 1 & play_type != "no_play" 
+                                        & !str_detect(desc, "(Challenge)") & !str_detect(desc, "(challenge)") & str_detect(desc, "(Timeout)"))
+ShouldBeLabeledNoPlayVec <- ShouldBeLabeledNoPlay$play_id
+pbp[ShouldBeLabeledNoPlayVec, "play_type"] <- "no_play"
+
+WronglyLabeledTimeout <- pbp %>% filter(timeout == 1 & play_type != "no_play" 
+                                        & !str_detect(desc, "(Challenge)") & !str_detect(desc, "(challenge)") & !str_detect(desc, "(Timeout)"))
+WronglyLabeledTimeoutVec <- WronglyLabeledTimeout$play_id
+pbp[WronglyLabeledTimeoutVec, "timeout"] <- 0
+
+WrongLabelPATAsNoPlay <-  pbp %>% filter(extra_point_attempt == 1 & play_type != "extra_point")
+WrongLabelPATAsNoPlayVec <- WrongLabelPATAsNoPlay$play_id
+pbp[WrongLabelPATAsNoPlayVec, "play_type"] <- "extra_point"
+
+WrongLabelTwoMinWarning <- pbp %>% filter( ((!is.na(play_type)) | (!is.na(play_type_nfl))) &
+                                             ( (str_detect(desc, "(Two-Minute)")) |
+                                                 (str_detect(desc, "(Two-minute)")) |
+                                                 (str_detect(desc, "(Two Minute)")) |
+                                                 (str_detect(desc, "(Two minute)"))))
+WrongLabelTwoMinVec <- WrongLabelTwoMinWarning$play_id
+pbp[WrongLabelTwoMinVec, "play_type"] <- NA
+pbp[WrongLabelTwoMinVec, "play_type_nfl"] <- NA
+
+# View(pbp %>% filter(game_id == "2012_10_HOU_CHI", qtr == 2))
+pbp[637346, "play_type_nfl"] <- "PENALTY"
+pbp[637346, "penalty"] <- NA
+
+Useless_NoSnap <- pbp %>% 
+  filter( (penalty == 0 & 
+             (timeout > 0 & play_type == "no_play")) |
+            (is.na(play_type) & 
+               ((is.na(play_type_nfl) & !str_detect(desc, "(enforced)") & !str_detect(desc, "(Enforced)") & !str_detect(desc, "(ENFORCED)")) | 
+                  (play_type_nfl != "PENALTY" & play_type_nfl != "FREE_KICK" & play_type_nfl != "KICK_OFF" & 
+                     !str_detect(desc, "(enforced)") & !str_detect(desc, "(Enforced)") & !str_detect(desc, "(ENFORCED)")))) )
+Useless_NoSnap_Vec <- Useless_NoSnap$play_id
+
+pbp <- pbp %>% filter(!play_id %in% Useless_NoSnap_Vec)
+pbp$play_id <- 1:nrow(pbp)
+
+WrongRunPassLabel <- pbp %>% filter(play_type == "run" & rush == 0 & pass == 0)
+WrongRunPassLabelID <- WrongRunPassLabel$play_id
+WrongRunPassLabel_Pass <- WrongRunPassLabel %>% 
+  filter(str_detect(desc, "(Back to pass)") | str_detect(desc, "(back to pass)"))
+WrongRunPassLabel_PassID <- WrongRunPassLabel_Pass$play_id
+pbp[WrongRunPassLabel_PassID, "pass"] <- 1
+WrongRunPassLabel_Rush <- WrongRunPassLabel %>% 
+  filter(!str_detect(desc, "(Back to pass)") & !str_detect(desc, "(back to pass)"))
+WrongRunPassLabel_RushID <- WrongRunPassLabel_Rush$play_id
+pbp[WrongRunPassLabel_RushID, "rush"] <- 1
+
+WronglyLabeledAsPunt <- pbp %>% filter(punt_attempt == 1 & 
+                                         !str_detect(desc, "(Punt)") & !str_detect(desc, "(punt)"))
+WronglyLabeledAsPuntVec <- WronglyLabeledAsPunt$play_id
+pbp[WronglyLabeledAsPuntVec, "punt_attempt"] <- 0
+# Fix the play_types manually
+# View(pbp %>% filter(game_id == "2000_06_WAS_PHI", qtr == 2)), 2 of final 3 plays of half
+pbp[56397:56398, "play_type"] <- "run"
+
+WronglyLabeledAsFumLost <- pbp %>% filter(fumble_lost == 1 & !str_detect(desc, "(Fumble)") & 
+                                            !str_detect(desc, "(fumble)") & !str_detect(desc, "(FUMBLE)") &
+                                            !str_detect(desc, "(muff)") & !str_detect(desc, "(Muff)") &
+                                            !str_detect(desc, "(MUFF)") & !str_detect(desc, "(recover)") &
+                                            !str_detect(desc, "(Recover)") & !str_detect(desc, "(RECOVER)"))
+WronglyLabeledAsFumLostVec <- WronglyLabeledAsFumLost$play_id
+pbp[WronglyLabeledAsFumLostVec, "fumble_lost"] <- 0
+
+WronglyLabeledAsFGAtt <- pbp %>% filter(field_goal_attempt == 1 & !str_detect(desc, "(goal)") & 
+                                          !str_detect(desc, "(Goal)") & !str_detect(desc, "(GOAL)"))
+WronglyLabeledAsFGAttVec <- WronglyLabeledAsFGAtt$play_id
+pbp[WronglyLabeledAsFGAttVec, "field_goal_attempt"] <- 0
+pbp[WronglyLabeledAsFGAttVec, "field_goal_result"] <- NA
+# Fix play_type, posteam manually
+# View(pbp %>% filter(game_id == "2000_11_OAK_DEN", qtr == 3)), 7-9 minutes left
+pbp[67714, "play_type"] <- "pass"
+pbp[67715, "play_type"] <- "run"
+pbp[67717, "play_type"] <- "kickoff"
+pbp[67714:67716, "posteam"] <- "DEN"
+pbp[67714:67716, "defteam"] <- "LV"
+pbp[67714:67716, "posteam_type"] <- "home"
+pbp[67714, "pass_attempt"] <- 1
+pbp[67715:67717, "pass_attempt"] <- 0
+pbp[67714, "pass"] <- 1
+pbp[67715:67717, "pass"] <- 0
+
+# Weird one here, PAT that got blocked but recovered by offense for 2 pts
+# View(pbp %>% filter(game_id == "2020_04_CLE_DAL", qtr == 4, is.na(down)))
+pbp[924514, "play_type"] <- "extra_point"
+pbp[924514, "play_type_nfl"] <- "XP_KICK"
+pbp[924514, "rush"] <- 0
+pbp[924514, "play"] <- 0
+pbp[924514, "special"] <- 1
+pbp[924514, "extra_point_attempt"] <- 1
+pbp[924514, "two_point_attempt"] <- 0
+pbp[924514, "rush_attempt"] <- 0
+
+WronglyLabeledAsKickoff <- pbp %>% filter(kickoff_attempt == 1 & !str_detect(desc, "(kick)") & 
+                                            !str_detect(desc, "(Kick)") & !str_detect(desc, "(KICK)"))
+WronglyLabeledAsKickoffVec <- WronglyLabeledAsKickoff$play_id
+pbp[WronglyLabeledAsKickoffVec, "kickoff_attempt"] <- 0
+
+ShouldBeLabeledAsKneel1 <- pbp %>% filter(play_type == "run" & ( (str_detect(desc, "(kneel)"))
+                                                                 | (str_detect(desc, "(Kneel)"))
+                                                                 | (str_detect(desc, "(KNEEL)"))
+                                                                 | (str_detect(desc, "(kNEEL)"))
+                                                                 | (str_detect(desc, "(takes a knee)"))
+                                                                 | (str_detect(desc, "(take a knee)"))
+                                                                 | (str_detect(desc, "(Takes a knee)")) 
+                                                                 | (str_detect(desc, "(Take a knee)"))
+                                                                 | (str_detect(desc, "(took a knee)"))
+                                                                 | (str_detect(desc, "(Took a knee)"))
+                                                                 | (str_detect(desc, "(took knee)"))
+                                                                 | (str_detect(desc, "(Took knee)"))
+                                                                 | (str_detect(desc, "(takes knee)"))
+                                                                 | (str_detect(desc, "(take knee)"))
+                                                                 | (str_detect(desc, "(Takes knee)")) 
+                                                                 | (str_detect(desc, "(Take knee)")) ))
+ShouldBeLabeledAsKneel1Vec <- ShouldBeLabeledAsKneel1$play_id
+pbp[ShouldBeLabeledAsKneel1Vec, "play_type"] <- "qb_kneel"
+pbp[ShouldBeLabeledAsKneel1Vec, "qb_kneel"] <- 1
+
+ShouldBeLabeledAsKneel2 <- pbp %>% filter(!is.na(down) & play == 1) %>%
+  filter(score_differential > 0 & score_differential < 9) %>%
+  filter(play_type == "run" & down == 3 & defteam_timeouts_remaining == 0 & game_seconds_remaining <= 40 & yards_gained < 1)
+ShouldBeLabeledAsKneel2Vec <- ShouldBeLabeledAsKneel2$play_id
+pbp[ShouldBeLabeledAsKneel2Vec, "play_type"] <- "qb_kneel"
+pbp[ShouldBeLabeledAsKneel2Vec, "qb_kneel"] <- 1
+
+ShouldBeLabeledAsSpike <- pbp %>% filter(play_type == "pass" & (str_detect(desc, "(spike)")))
+ShouldBeLabeledAsSpikeVec <- ShouldBeLabeledAsSpike$play_id
+pbp[ShouldBeLabeledAsSpikeVec, "play_type"] <- "qb_spike"
+pbp[ShouldBeLabeledAsSpikeVec, "qb_spike"] <- 1
+
+# Fix WPA mistakes for non-kneels
+Wrong_WP_Label <- pbp %>% filter(is.na(wp) & !is.na(home_wp) & play_type != "qb_kneel")
+Wrong_WP_Label_ID <- Wrong_WP_Label$play_id
+Wrong_WP_Label_HomeTeamPos <- Wrong_WP_Label %>% filter(posteam == home_team)
+Wrong_WP_Label_HomeTeamPos_ID <- Wrong_WP_Label_HomeTeamPos$play_id
+pbp[Wrong_WP_Label_HomeTeamPos_ID, "wp"] <- pbp[Wrong_WP_Label_HomeTeamPos_ID, "home_wp"]
+pbp[Wrong_WP_Label_HomeTeamPos_ID, "def_wp"] <- 1 - (pbp[Wrong_WP_Label_HomeTeamPos_ID, "wp"])
+pbp[Wrong_WP_Label_HomeTeamPos_ID, "wpa"] <- 
+  pbp[Wrong_WP_Label_HomeTeamPos_ID, "home_wp_post"] - pbp[Wrong_WP_Label_HomeTeamPos_ID, "home_wp"]
+Wrong_WP_Label_AwayTeamPos <- Wrong_WP_Label %>% filter(posteam == away_team)
+Wrong_WP_Label_AwayTeamPos_ID <- Wrong_WP_Label_AwayTeamPos$play_id
+pbp[Wrong_WP_Label_AwayTeamPos_ID, "wp"] <- pbp[Wrong_WP_Label_AwayTeamPos_ID, "away_wp"]
+pbp[Wrong_WP_Label_AwayTeamPos_ID, "def_wp"] <- 1 - (pbp[Wrong_WP_Label_AwayTeamPos_ID, "wp"])
+pbp[Wrong_WP_Label_AwayTeamPos_ID, "wpa"] <- 
+  pbp[Wrong_WP_Label_AwayTeamPos_ID, "away_wp_post"] - pbp[Wrong_WP_Label_AwayTeamPos_ID, "away_wp"]
+
+# View(pbp %>% filter(game_id == "2000_03_ATL_CAR", qtr == 3))
+pbp[47802, "play_type"] <- "pass"
+pbp[47802, "fourth_down_failed"] <- 1
+pbp[47802, "fixed_drive_result"] <- "Turnover on downs"
+pbp[47802, "series_result"] <- "Turnover on downs"
+# View(pbp %>% filter(game_id == "2000_09_TEN_WAS", qtr == 2))
+pbp[63297, "play_type"] <- "run"
+pbp[63297, "fourth_down_failed"] <- 1
+pbp[63297, "fixed_drive_result"] <- "Turnover on downs"
+pbp[63297, "series_result"] <- "Turnover on downs"
+
+# View(pbp %>% filter(game_id == "2012_04_CLE_BAL", qtr == 4)), 2nd to last play of game
+pbp[569786, "fourth_down_failed"] <- 0
+
+# View(pbp %>% filter(game_id == "2018_01_ATL_PHI", qtr == 1)), 10:55 left
+pbp[828003, "fourth_down_failed"] <- 1
+
+# A weird situation (offsides, but first down given on 3rd and 15?)
+# View(pbp %>% filter(game_id == "1999_10_SF_NO", qtr == 1)), 9:37 left
+pbp[22994, "first_down_penalty"] <- 1
+pbp[22994, "first_down"] <- 1
+
+# Another odd situation (defensive delay of game leads to first)
+# View(pbp %>% filter(game_id == "2000_17_ARI_WAS", qtr == 1)), 5:05 left
+pbp[80542, "first_down_penalty"] <- 1
+pbp[80542, "first_down"] <- 1
+
+# View(pbp %>% filter(game_id == "2006_10_WAS_PHI", qtr == 2)), 7:25 left
+pbp[324380, "first_down_penalty"] <- 1
+pbp[324380, "first_down"] <- 1
+
+# View(pbp %>% filter(game_id == "2005_04_MIN_ATL", qtr == 3)), 12:02 left
+pbp[266321, "first_down_penalty"] <- 1
+pbp[266321, "first_down"] <- 1
+
+# View(pbp %>% filter(game_id == "2018_01_ATL_PHI"))
+# 8:23 Q2 DPI
+pbp[828041, "first_down_penalty"] <- 1
+pbp[828041, "first_down"] <- 1
+# 2nd to last play of 1st half
+pbp[828075, "first_down_penalty"] <- 1
+pbp[828075, "first_down"] <- 1
+# 1st play of Q4
+pbp[828119, "first_down_penalty"] <- 1
+pbp[828119, "first_down"] <- 1
+# 2nd to last play of game
+pbp[828163, "first_down_penalty"] <- 1
+pbp[828163, "first_down"] <- 1
+
+# View(pbp %>% filter(game_id == "2000_03_NYG_CHI", qtr == 4)), 3rd and 2 at 9:24
+pbp[49083, "first_down"] <- 1
+pbp[49083, "first_down_rush"] <- 1
+
+# View(pbp %>% filter(game_id == "2000_16_OAK_SEA", qtr == 3)), 1:12 left
+pbp[79814, "down"] <- 3
+pbp[79814, "ydstogo"] <- 5
+
+# View(pbp %>% filter(game_id == "2007_03_STL_TB", qtr == 3)), 8:41 3rd down
+pbp[351708, "first_down"] <- 1
+pbp[351708, "first_down_rush"] <- 1
+pbp[351708, "yards_gained"] <- 6
+
+# View(pbp %>% filter(game_id == "2009_12_TB_ATL", qtr == 2)), 2nd and 14, 2:00
+pbp[458246, "first_down_penalty"] <- 1
+pbp[458246, "first_down"] <- 1
+
+# More data entry errors here:
+# View(pbp %>% filter(game_id == "1999_14_MIN_KC", qtr == 2)), ending with 0:29 TD
+pbp[32325, "play_id"] <- 32322
+pbp[32322, "play_id"] <- 32323
+pbp[32323, "play_id"] <- 32324
+pbp[32324, "play_id"] <- 32325
+# View(pbp %>% filter(game_id == "2000_01_TEN_BUF", qtr == 1)), 1:35 offsides
+pbp[45102, "play_id"] <- 45103
+pbp[45103, "play_id"] <- 45102
+# View(pbp %>% filter(game_id == "2000_02_CAR_SF", qtr == 2)), 3rd/4th down at 1:23
+pbp[45478, "play_id"] <- 45479
+pbp[45479, "play_id"] <- 45478
+# View(pbp %>% filter(game_id == "2000_02_WAS_DET", qtr == 1)), 9:37 FG/sack
+pbp[47564, "play_id"] <- 47565
+pbp[47565, "play_id"] <- 47564
+# View(pbp %>% filter(game_id == "2000_03_ATL_CAR", qtr == 2)), ending in 1:42 run
+pbp[47770, "play_id"] <- 47767
+pbp[47767, "play_id"] <- 47768
+pbp[47768, "play_id"] <- 47769
+pbp[47769, "play_id"] <- 47770
+# View(pbp %>% filter(game_id == "2000_04_WAS_NYG", qtr == 2)), 2 plays after 6:27 KO
+pbp[51895, "play_id"] <- 51896
+pbp[51896, "play_id"] <- 51895
+# View(pbp %>% filter(game_id == "2000_06_PIT_NYJ", qtr == 4)), 2:20 INT
+pbp[55835, "play_id"] <- 55836
+pbp[55836, "play_id"] <- 55835
+# View(pbp %>% filter(game_id == "2000_07_BAL_WAS", qtr == 2)), 6:27 1st/2nd down
+pbp[56712, "play_id"] <- 56713
+pbp[56713, "play_id"] <- 56712
+# View(pbp %>% filter(game_id == "2000_07_JAX_TEN", qtr == 4)), 2:15 2nd/3rd down
+pbp[57778, "play_id"] <- 57779
+pbp[57779, "play_id"] <- 57778
+# View(pbp %>% filter(game_id == "2000_09_TEN_WAS", qtr == 4)), 7:45 2nd/3rd down
+pbp[63361, "play_id"] <- 63362
+pbp[63362, "play_id"] <- 63361
+# View(pbp %>% filter(game_id == "2000_11_NYJ_IND", qtr == 2)), 7:07 1st/2nd down
+pbp[67502, "play_id"] <- 67503
+pbp[67503, "play_id"] <- 67502
+# View(pbp %>% filter(game_id == "2000_11_CHI_BUF", qtr == 4)), 4:30 3rd/4th down
+pbp[66462, "play_id"] <- 66463
+pbp[66463, "play_id"] <- 66462
+# View(pbp %>% filter(game_id == "2000_13_PHI_WAS", qtr == 2)), starts at 13:50
+pbp[72832, "play_id"] <- 72834
+pbp[72833, "play_id"] <- 72832
+pbp[72834, "play_id"] <- 72833
+# View(pbp %>% filter(game_id == "2000_14_SEA_ATL", qtr == 3)), 12:25 1st/2nd down
+pbp[75178, "play_id"] <- 75179
+pbp[75179, "play_id"] <- 75178
+# View(pbp %>% filter(game_id == "2000_17_CIN_PHI", qtr == 4)), 0:49 is messed up play
+pbp[81302, "play_id"] <- 81289
+pbp[81289, "play_id"] <- 81290
+pbp[81290, "play_id"] <- 81291
+pbp[81291, "play_id"] <- 81292
+pbp[81292, "play_id"] <- 81293
+pbp[81293, "play_id"] <- 81294
+pbp[81294, "play_id"] <- 81295
+pbp[81295, "play_id"] <- 81296
+pbp[81296, "play_id"] <- 81297
+pbp[81297, "play_id"] <- 81298
+pbp[81298, "play_id"] <- 81299
+pbp[81299, "play_id"] <- 81300
+pbp[81300, "play_id"] <- 81301
+pbp[81301, "play_id"] <- 81302
+# View(pbp %>% filter(game_id == "2013_13_JAX_CLE", qtr == 3)), 9:44 PAT penalty
+pbp[636527, "play_id"] <- 636526
+pbp[636526, "play_id"] <- 636527
+# View(pbp %>% filter(game_id == "2014_06_DEN_NYJ", qtr == 2)), 0:27 PAT penalty
+pbp[663944, "play_id"] <- 663943
+pbp[663943, "play_id"] <- 663944
+pbp <- arrange(pbp, play_id)
+
+# Two field goals from View(pbp %>% filter(game_id == "2009_11_SD_DEN", qtr %in% c(2, 4)))
+# This fix is b/c they erroneously had the phrase "extra point" in the "desc" column
+pbp[455201, "desc"] <- "Penalty occurred after the field goal and will be assessed on the kickoff.  PENALTY on DEN-M.Thomas, Unsportsmanlike Conduct, 15 yards, enforced at SD 30 - No Play."
+pbp[455270, "desc"] <- "Penalty occurred after the field goal and will be assessed on the kickoff.  PENALTY on DEN-R.Fields, Unsportsmanlike Conduct, 15 yards, enforced at SD 30 - No Play."
+
+# These plays have play == 0 and special == 0, for some reason
+# None of them are special teams
+IncorrectPlayLabel <- 
+  pbp %>% filter(!is.na(down) & play_type != "qb_kneel" & play_type != "qb_spike" &
+                   play == 0 & special == 0)
+IncorrectPlayLabelVec <- IncorrectPlayLabel$play_id
+pbp[IncorrectPlayLabelVec, "play"] <- 1
+
+# However, these are all special teams
+IncorrectPlayLabel2 <- pbp %>% filter(special_teams_play == 1 & play == 1
+                                      & play_type != "run" & play_type != "pass")
+IncorrectPlayLabelID2 <- IncorrectPlayLabel2$play_id
+pbp[IncorrectPlayLabelID2, "special"] <- 1
+pbp[IncorrectPlayLabelID2, "play"] <- 0
+
+IncorrectPuntLabel <- pbp %>% filter(special == 0 & play_type != "pass" & play_type != "run" & 
+                                       (str_detect(pbp$desc, "(punts)") | str_detect(pbp$desc, "(Punts)") | 
+                                          str_detect(pbp$desc, "(punt is)") | str_detect(pbp$desc, "(Punt is)")))
+IncorrectPuntLabelID <- IncorrectPuntLabel$play_id
+pbp[IncorrectPuntLabelID, "special"] <- 1
+pbp[IncorrectPuntLabelID, "play"] <- 0
+
+IncorrectPATLabel <- pbp %>% filter(play == 1 & rush == 0 & pass == 0 & play_type != "no_play")
+IncorrectPATLabelID <- IncorrectPATLabel$play_id
+pbp[IncorrectPATLabelID, "special"] <- 1
+pbp[IncorrectPATLabelID, "play"] <- 0
+
+IncorrectPATLabel2 <- pbp %>% filter(is.na(play_type_nfl) & play_type == "extra_point")
+IncorrectPATLabelID2 <- IncorrectPATLabel2$play_id
+pbp[IncorrectPATLabelID2, "play_type_nfl"] <- "XP_KICK"
+
+Incorrect2PtLabel <- pbp %>% filter(two_point_attempt == 1 & play == 0 & 
+                                      !str_detect(pbp$desc, "(Extra point)") & !str_detect(pbp$desc, "(extra point)"))
+Incorrect2PtLabelID <- Incorrect2PtLabel$play_id
+pbp[Incorrect2PtLabelID, "play"] <- 1
+pbp[Incorrect2PtLabelID, "special"] <- 0
+
+Incorrect2PtLabelPass <- pbp %>% filter(two_point_attempt == 1 & penalty == 1 & pass_attempt == 1 & 
+                                          !str_detect(pbp$desc, "(Extra point)") & !str_detect(pbp$desc, "(extra point)"))
+Incorrect2PtLabelPassID <- Incorrect2PtLabelPass$play_id
+pbp[Incorrect2PtLabelPassID, "play_type"] <- "pass"
+
+Incorrect2PtLabelRun <- pbp %>% filter(two_point_attempt == 1 & penalty == 1 & pass_attempt == 0 & 
+                                         !str_detect(pbp$desc, "(Extra point)") & !str_detect(pbp$desc, "(extra point)"))
+Incorrect2PtLabelRunID <- Incorrect2PtLabelRun$play_id
+pbp[Incorrect2PtLabelRunID, "play_type"] <- "run"
+
+pbp <- pbp %>% group_by(game_id, game_half) %>% 
+  mutate(LastPlayOfHalf = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id, game_half) %>% 
+  mutate(FirstPlayOfHalf = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(FirstPlayOfGame = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(LastPlayOfGame = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+Wrong_EPA_Label <- pbp %>% filter(is.na(epa) & play_type != "qb_kneel" & LastPlayOfGame == 1 & score_differential == score_differential_post)
+Wrong_EPA_Label_ID <- Wrong_EPA_Label$play_id
+pbp[Wrong_EPA_Label_ID, "epa"] <- (-1 * pbp[Wrong_EPA_Label_ID, "ep"])
+
+pbp <- pbp %>% mutate(posteam_win = 
+                        case_when(
+                          (result > 0 & posteam == home_team) | (result < 0 & posteam == away_team) ~ 1,
+                          (result < 0 & posteam == home_team) | ( result > 0 & posteam == away_team) ~ 0,
+                          result == 0 ~ 0.5))
+
+pbp <- pbp %>%
+  mutate(EndGamePtDiff = ifelse(posteam_type == "home", result, (-1 * result)))
+
+QBPunts_Since2001 <- pbp %>% filter(play == 0 & season > 2000 & special_teams_play == 0 & play_type != "qb_kneel" & play_type != "qb_spike")
+QBPunts_Since2001_Vec <- QBPunts_Since2001$play_id
+pbp[QBPunts_Since2001_Vec, "special_teams_play"] <- 1
+
+# CREATE THE "NewDrive" COLUMN
+pbp <- pbp %>% mutate(LastPlayOfDrive = ifelse( 
+  (is.na(td_team) &
+     (punt_attempt %in% 1 | play_type %in% "punt" | 
+        (extra_point_attempt %in% 1 & (play_type != "no_play" | (str_detect(pbp$desc, "(enforced between downs)")))) | 
+        play_type %in% "extra_point" |  two_point_attempt %in% 1 | (str_detect(pbp$desc, "(two-point)") & penalty %in% 0) | 
+        (str_detect(pbp$desc, "(TWO-POINT)") & penalty %in% 0) | (str_detect(pbp$desc, "(Two-point)") & penalty %in% 0) |
+        (str_detect(pbp$desc, "(Two-Point)") & penalty %in% 0) | field_goal_result %in% "missed" | field_goal_result %in% "blocked" |
+        field_goal_result %in% "made" | field_goal_attempt %in% 1 | interception %in% 1 | safety %in% 1 |
+        fumble_lost %in% 1 | fourth_down_failed %in% 1 | LastPlayOfHalf %in% 1)), 1, 0)
+)
+LastPlayOfDrive_Original <- pbp %>% filter(LastPlayOfDrive == 1)
+
+AfterPATPenalty <- pbp %>% filter(posteam != lead(posteam), 
+                                  is.na(td_team), !str_detect(pbp$desc, "(onside)"), !str_detect(pbp$desc, "(Onside)"), !str_detect(pbp$desc, "(ONSIDE)"),
+                                  !str_detect(pbp$desc, "(recover)"), !str_detect(pbp$desc, "(Recover)"), !str_detect(pbp$desc, "(RECOVER)"), 
+                                  !str_detect(pbp$desc, "(Delay of Game)"), LastPlayOfDrive != TRUE, game_id == lead(game_id))
+AfterPATPenaltyVec <- AfterPATPenalty$play_id 
+
+pbp <- pbp %>% filter(!play_id %in% AfterPATPenaltyVec)
+pbp$play_id <- 1:nrow(pbp)
+
+# More dealing with penalties after PATs
+# View(pbp %>% filter(posteam != lead(posteam), is.na(td_team), is.na(down), !play_type %in% "kickoff", LastPlayOfDrive != TRUE, game_id == lead(game_id)))
+# Fix the onside recovery on there
+pbp[495074, "play_type"] <- "kickoff"
+AfterPATPenalty2 <- pbp %>% 
+  filter(posteam != lead(posteam), is.na(td_team), is.na(down), !play_type %in% "kickoff", 
+         LastPlayOfDrive != TRUE, game_id == lead(game_id))
+AfterPATPenaltyVec2 <- AfterPATPenalty2$play_id 
+pbp <- pbp %>% filter(!play_id %in% AfterPATPenaltyVec2)
+pbp$play_id <- 1:nrow(pbp)
+
+AfterPATPenalty3 <- pbp %>% 
+  filter(lag(play_type) %in% "extra_point", lead(play_type) %in% "kickoff", 
+         !play_type %in% "kickoff")
+AfterPATPenaltyVec3 <- AfterPATPenalty3$play_id 
+pbp <- pbp %>% filter(!play_id %in% AfterPATPenaltyVec3)
+pbp$play_id <- 1:nrow(pbp)
+
+# This is just a dummy variable that will be fixed later
+pbp <- pbp %>%
+  mutate(NewDrive = 0)
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(NewDrive = ifelse(FirstPlayOfGame == 1, 1, 
+                           ifelse(lag(LastPlayOfDrive == 1), 1 + lag(NewDrive), lag(NewDrive)))) %>%
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(NewDrive = cumsum(NewDrive)) %>%
+  ungroup()
+
+pbp <- pbp %>% select(1:19, 380, 20:379)
+pbp <- pbp %>% select(-"drive", -"fixed_drive")
+
+pbp <- pbp %>% group_by(game_id, NewDrive) %>% 
+  mutate(FirstPlayOfDrive = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id, NewDrive) %>% 
+  mutate(LastPlayOfDrive = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+PATsToBeFixed <- pbp %>% filter(!fixed_drive_result %in% "Touchdown" & !fixed_drive_result %in% "Opp touchdown" &
+                                  (play_type == "extra_point" | extra_point_attempt == 1 | two_point_attempt == 1 |
+                                     (str_detect(pbp$desc, "(two-point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(TWO-POINT)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Two-point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Two-Point)") & !play_type %in% "kickoff") |
+                                     (str_detect(pbp$desc, "(two point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(TWO POINT)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Two point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Two Point)") & !play_type %in% "kickoff") |
+                                     (str_detect(pbp$desc, "(extra point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(EXTRA POINT)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Extra Point)") & !play_type %in% "kickoff") | 
+                                     (str_detect(pbp$desc, "(Extra point)") & !play_type %in% "kickoff")))
+
+OFFPATsToBeFixed <- pbp %>% filter(!fixed_drive_result %in% "Touchdown" & !fixed_drive_result %in% "Opp touchdown" &
+                                     (play_type == "extra_point" | extra_point_attempt == 1 | two_point_attempt == 1 |
+                                        (str_detect(pbp$desc, "(two-point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(TWO-POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two-point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two-Point)") & !play_type %in% "kickoff") |
+                                        (str_detect(pbp$desc, "(two point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(TWO POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two Point)") & !play_type %in% "kickoff") |
+                                        (str_detect(pbp$desc, "(extra point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(EXTRA POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Extra Point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Extra point)") & !play_type %in% "kickoff")) &
+                                     (lag(td_team) == lag(posteam)))
+
+OFFPATsToBeFixedVec <- OFFPATsToBeFixed$play_id
+pbp[OFFPATsToBeFixedVec, "fixed_drive_result"] <- "Touchdown"
+pbp[OFFPATsToBeFixedVec, "drive_end_transition"] <- "Touchdown"
+
+DEFPATsToBeFixed <- pbp %>% filter(!fixed_drive_result %in% "Touchdown" & !fixed_drive_result %in% "Opp touchdown" &
+                                     (play_type == "extra_point" | extra_point_attempt == 1 | two_point_attempt == 1 |
+                                        (str_detect(pbp$desc, "(two-point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(TWO-POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two-point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two-Point)") & !play_type %in% "kickoff") |
+                                        (str_detect(pbp$desc, "(two point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(TWO POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Two Point)") & !play_type %in% "kickoff") |
+                                        (str_detect(pbp$desc, "(extra point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(EXTRA POINT)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Extra Point)") & !play_type %in% "kickoff") | 
+                                        (str_detect(pbp$desc, "(Extra point)") & !play_type %in% "kickoff")) &
+                                     (lag(td_team) != lag(posteam)))
+
+DEFPATsToBeFixedVec <- DEFPATsToBeFixed$play_id
+pbp[DEFPATsToBeFixedVec, "fixed_drive_result"] <- "Opp touchdown"
+pbp[DEFPATsToBeFixedVec, "drive_end_transition"] <- "Opp touchdown"
+
+pbp <- pbp %>% group_by(game_id, game_half) %>% 
+  mutate(LastDriveOfHalf = as.numeric(NewDrive == max(NewDrive))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(LastDriveOfGame = as.numeric(NewDrive == max(NewDrive))) %>% 
+  ungroup()
+
+WrongLabelLastDriveOfHalf <- pbp %>% filter(is.na(fixed_drive_result) & LastDriveOfHalf == 1)
+WrongLabelLastDriveID <- WrongLabelLastDriveOfHalf$play_id
+pbp[WrongLabelLastDriveID, "fixed_drive_result"] <- "End of half"
+
+Last_Play_Of_Drive_Info <- pbp %>%
+  group_by(game_id, NewDrive) %>%
+  filter(play_id == max(play_id)) %>%
+  ungroup() %>%
+  select(game_id, NewDrive, REAL_drive_result = fixed_drive_result)
+
+pbp <- pbp %>%
+  merge(Last_Play_Of_Drive_Info, by = c("game_id", "NewDrive"))
+pbp <- arrange(pbp, play_id)
+
+pbp <- pbp %>% select(-"fixed_drive_result")
+pbp <- pbp %>% select(1, 3:20, "NewDrive", 21:381)
+
+# Now, repeat the process to make NewSeries variable
+pbp <- pbp %>% mutate(LastPlayOfSeries = ifelse( 
+  (is.na(td_team) &
+     (LastPlayOfDrive %in% 1 | first_down %in% 1 | punt_attempt %in% 1 | play_type %in% "punt" | 
+        (extra_point_attempt %in% 1 & (play_type != "no_play" | (str_detect(pbp$desc, "(enforced between downs)")))) | 
+        play_type %in% "extra_point" |  two_point_attempt %in% 1 | (str_detect(pbp$desc, "(two-point)") & penalty %in% 0) | 
+        (str_detect(pbp$desc, "(TWO-POINT)") & penalty %in% 0) | (str_detect(pbp$desc, "(Two-point)") & penalty %in% 0) |
+        (str_detect(pbp$desc, "(Two-Point)") & penalty %in% 0) | field_goal_result %in% "missed" | field_goal_result %in% "blocked" |
+        field_goal_result %in% "made" | field_goal_attempt %in% 1 | interception %in% 1 | safety %in% 1 |
+        fumble_lost %in% 1 | fourth_down_failed %in% 1 | LastPlayOfHalf %in% 1)), 1, 0)
+)
+
+pbp <- pbp %>%
+  mutate(NewSeries = 0)
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(NewSeries = ifelse(FirstPlayOfGame == 1, 1, 
+                            ifelse(lag(LastPlayOfSeries == 1), 1 + lag(NewSeries), lag(NewSeries)))) %>%
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id) %>% 
+  mutate(NewSeries = cumsum(NewSeries)) %>%
+  ungroup()
+
+pbp <- pbp %>% select(1:299, 383, 300:382)
+pbp <- pbp %>% select(-"series")
+
+SeriesResult_Wrong_PATs <- pbp %>% filter(is.na(series_result)) %>% 
+  filter(play_type == "extra_point" | extra_point_attempt == 1 | two_point_attempt == 1 |
+           (str_detect(desc, "(two-point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(TWO-POINT)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Two-point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Two-Point)") & !play_type %in% "kickoff") |
+           (str_detect(desc, "(two point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(TWO POINT)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Two point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Two Point)") & !play_type %in% "kickoff") |
+           (str_detect(desc, "(extra point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(EXTRA POINT)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Extra Point)") & !play_type %in% "kickoff") | 
+           (str_detect(desc, "(Extra point)") & !play_type %in% "kickoff"))
+SeriesResult_Wrong_PATs_Vec <- SeriesResult_Wrong_PATs$play_id
+
+SeriesResult_PATs_OffTD <- SeriesResult_Wrong_PATs %>%
+  filter(REAL_drive_result == "Touchdown")
+SeriesResult_PATs_OffTD_Vec <- SeriesResult_PATs_OffTD$play_id
+
+SeriesResult_PATs_DefTD <- SeriesResult_Wrong_PATs %>%
+  filter(REAL_drive_result == "Opp touchdown")
+SeriesResult_PATs_DefTD_Vec <- SeriesResult_PATs_DefTD$play_id
+
+pbp[SeriesResult_PATs_OffTD_Vec, "series_result"] <- "Touchdown"
+pbp[SeriesResult_PATs_DefTD_Vec, "series_result"] <- "Opp touchdown"
+
+pbp <- pbp %>% group_by(game_id, NewSeries) %>% 
+  mutate(FirstPlayOfSeries = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp <- pbp %>% group_by(game_id, NewSeries) %>% 
+  mutate(LastPlayOfSeries = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+SeriesResult_ShouldBeEndOfHalf <- pbp %>% filter(is.na(series_result) & LastPlayOfSeries == 1)
+SeriesResult_ShouldBeEndOfHalf_Vec <- SeriesResult_ShouldBeEndOfHalf$play_id
+pbp[SeriesResult_ShouldBeEndOfHalf_Vec, "series_result"] <- "End of half"
+
+SeriesResult_EndOfHalf_PATs <- pbp %>% filter(series_result == "End of half" & LastPlayOfSeries == 1 &
+                                                (play_type == "extra_point" | extra_point_attempt == 1 | two_point_attempt == 1 |
+                                                   (str_detect(desc, "(two-point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(TWO-POINT)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Two-point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Two-Point)") & !play_type %in% "kickoff") |
+                                                   (str_detect(desc, "(two point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(TWO POINT)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Two point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Two Point)") & !play_type %in% "kickoff") |
+                                                   (str_detect(desc, "(extra point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(EXTRA POINT)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Extra Point)") & !play_type %in% "kickoff") | 
+                                                   (str_detect(desc, "(Extra point)") & !play_type %in% "kickoff")))
+
+Last_Play_Of_Series_Info <- pbp %>%
+  group_by(game_id, NewSeries) %>%
+  filter(play_id == max(play_id)) %>%
+  ungroup() %>%
+  select(game_id, NewSeries, REAL_series_result = series_result)
+
+pbp <- pbp %>%
+  merge(Last_Play_Of_Series_Info, by = c("game_id", "NewSeries"))
+pbp <- arrange(pbp, play_id)
+
+Disagreements_Series_Result <- pbp %>% 
+  filter(!is.na(series_result) & REAL_series_result != series_result) %>% 
+  select(1:29, "series_result", "REAL_series_result")
+Disagreements_Series_Result_Vec <- Disagreements_Series_Result$play_id
+pbp[Disagreements_Series_Result_Vec, "series_result"] <- pbp[Disagreements_Series_Result_Vec, "REAL_series_result"]
+
+pbp <- pbp %>% 
+  mutate(series_result = (ifelse(is.na(series_result), REAL_series_result, series_result)))
+pbp <- pbp %>% select(-"series_result")
+pbp <- pbp %>% select(1, 3:265, "NewSeries", 266:383)
+
+pbp <- pbp %>% mutate(new_series_success = 
+                        ifelse(REAL_series_result %in% c("First down", "Touchdown"), 1, 0))
+
+# FIX new_series_success and REAL_series_result for kickoffs where kicking team scores
+Kickoffs_KickTeamScores <- pbp %>% filter(!is.na(td_team) & td_team != posteam & is.na(down))
+Kickoffs_KickTeamScores_Vec <- Kickoffs_KickTeamScores$play_id
+pbp[Kickoffs_KickTeamScores$play_id, "new_series_success"] <- 0
+pbp[Kickoffs_KickTeamScores$play_id, "REAL_series_result"] <- "Opp touchdown"
+
+pbp <- pbp %>% select(-"series_success")
+
+Offsets <- pbp %>% filter((play_type_nfl == "PENALTY" & is.na(play_type)) |
+                            (str_detect(desc, "(No Play)") & (str_detect(desc, "(offset)"))) |
+                            (str_detect(desc, "(No Play)") & (str_detect(desc, "(Offset)"))) |
+                            (str_detect(desc, "(No play)") & (str_detect(desc, "(offset)"))) |
+                            (str_detect(desc, "(No play)") & (str_detect(desc, "(Offset)"))) |
+                            (str_detect(desc, "(no play)") & (str_detect(desc, "(offset)"))) |
+                            (str_detect(desc, "(no play)") & (str_detect(desc, "(Offset)"))))
+OffsetID <- Offsets$play_id
+pbp <- pbp %>% filter(!play_id %in% OffsetID)
+pbp$play_id <- 1:nrow(pbp)
+
+# These are for confidence intervals
+SD_Bernoulli <- function(x){
+  mu <- mean(x, na.rm = TRUE)
+  return( sqrt( (mu*(1 - mu)) ))
+}
+
+SE_Bernoulli <- function(x){
+  mu <- mean(x, na.rm = TRUE)
+  return( sqrt( (mu*(1 - mu))/(length(x)) ) )
+}
+
+ConfBand_Bernoulli <- function(x) {
+  return(1.96*SE_Bernoulli(x))
+}
+
+upper_Bernoulli <- function(x) {
+  mean(x, na.rm = TRUE) + ConfBand_Bernoulli(x)
+}
+
+lower_Bernoulli <- function(x) {
+  mean(x, na.rm = TRUE) - ConfBand_Bernoulli(x)
+}
+
+# Make separate formula for continuous variables
+SE_Continuous <- function(x){
+  SD <- sd(x, na.rm = TRUE)
+  return( SD/sqrt((length(x))) )
+}
+
+ConfBand_Continuous <- function(x) {
+  return(1.96*SE_Continuous(x))
+}
+
+upper_Continuous <- function(x) {
+  mean(x, na.rm = TRUE) + ConfBand_Continuous(x)
+}
+
+lower_Continuous <- function(x) {
+  mean(x, na.rm = TRUE) - ConfBand_Continuous(x)
+}
+
+pbp_NoPATsOrSpecials_Since2006 <- pbp %>% filter(season >= 2006) %>%
+  filter(!is.na(down) & extra_point_attempt == 0 & two_point_attempt == 0 & punt_attempt == 0 & field_goal_attempt == 0 &
+           (kickoff_attempt == 0 | (!str_detect(desc, "(kick)") & !str_detect(desc, "(Kick)") & !str_detect(desc, "(KICK)"))) 
+         & play_type != "extra_point" & play_type != "kickoff" & play_type != "qb_kneel" & play_type != "qb_spike")
+pbp_NoPATsOrSpecials_Since2006 <- pbp_NoPATsOrSpecials_Since2006 %>% filter(special == 0)
+pbp_NoPATsOrSpecials_Since2006 <- pbp_NoPATsOrSpecials_Since2006 %>%
+  filter(pass == 1 | rush == 1)
+
+pbp_ProjectPlays <- pbp_NoPATsOrSpecials_Since2006
+pbp_ProjectPlays$play_id <- 1:nrow(pbp_ProjectPlays)
+rm(pbp) # Do this to conserve space
+
+# Re-do the "X play of drive" columns with special teams being gone
+pbp_ProjectPlays <- pbp_ProjectPlays %>% select(-"FirstPlayOfDrive", -"LastPlayOfDrive",
+                                                -"FirstPlayOfSeries", -"LastPlayOfSeries") 
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% group_by(game_id, NewDrive) %>% 
+  mutate(FirstPlayOfDrive = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% group_by(game_id, NewDrive) %>% 
+  mutate(LastPlayOfDrive = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% group_by(game_id, NewSeries) %>% 
+  mutate(FirstPlayOfSeries = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% group_by(game_id, NewSeries) %>% 
+  mutate(LastPlayOfSeries = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+WrongNALabel_PassOE <- pbp_ProjectPlays %>% filter(season > 2005 & is.na(pass_oe))
+WrongNALabel_PassOE_ID <- WrongNALabel_PassOE$play_id
+WrongNALabel_PassOE_Pass <- WrongNALabel_PassOE %>% 
+  filter(pass == 1)
+WrongNALabel_PassOE_PassID <- WrongNALabel_PassOE_Pass$play_id
+pbp_ProjectPlays[WrongNALabel_PassOE_PassID, "pass_oe"] <- 100 * (1 - pbp_ProjectPlays[WrongNALabel_PassOE_PassID, "xpass"])
+WrongNALabel_PassOE_Rush <- WrongNALabel_PassOE %>% 
+  filter(rush == 1)
+WrongNALabel_PassOE_RushID <- WrongNALabel_PassOE_Rush$play_id
+pbp_ProjectPlays[WrongNALabel_PassOE_RushID, "pass_oe"] <- (-100 * pbp_ProjectPlays[WrongNALabel_PassOE_RushID, "xpass"])
+
+# Make sure every Project Play has pass == 1 OR rush == 1, never both
+# View(pbp_ProjectPlays %>% filter(pass > 0 & rush > 0))
+# View(pbp_ProjectPlays %>% filter(pass < 1 & rush < 1))
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorPass =
+                                                  ifelse(FirstPlayOfDrive == 1, NA, 
+                                                         ifelse(lag(pass) == 1, 1, 0)))
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorRush =
+                                                  ifelse(FirstPlayOfDrive == 1, NA, 
+                                                         ifelse(lag(rush) == 1, 1, 0)))
+pbp_ProjectPlays_FirstPlayOfDrive <- pbp_ProjectPlays %>% filter(FirstPlayOfDrive == 1)
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorPlayType =
+                                                  ifelse(FirstPlayOfDrive == 1, "N/A (Start of Drive)", 
+                                                         ifelse(lag(pass) == 1, "Pass", "Rush")))
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorEPASuccess =
+                                                  ifelse((FirstPlayOfDrive == 1), NA, 
+                                                         ifelse(lag(epa) > 0, 1, 0)))
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PlaySwitch =
+                                                  ifelse(FirstPlayOfDrive == 1, NA, 
+                                                         ifelse(pass != lag(pass), 1, 0)))
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(Exp_SwitchRate =
+                                                  ifelse(FirstPlayOfDrive == 1, NA, 
+                                                         ifelse(lag(pass) == 1, 1 - xpass, xpass)))
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(switchrate_OE =
+                                                  ifelse(FirstPlayOfDrive == 1, NA, 
+                                                         ifelse(PlaySwitch == 1, 100 * (1 - Exp_SwitchRate), 100 * (-1 * Exp_SwitchRate))))
+
+# Section 1: graphs of all Project Plays in general
+mean(pbp_ProjectPlays$pass, na.rm = T)
+mean(pbp_ProjectPlays$xpass, na.rm = T)
+mean(pbp_ProjectPlays$pass_oe, na.rm = T)
+mean(pbp_ProjectPlays$PlaySwitch, na.rm = T)
+mean(pbp_ProjectPlays$Exp_SwitchRate, na.rm = T)
+mean(pbp_ProjectPlays$switchrate_OE, na.rm = T)
+
+pbp_ProjectPlays_PriorPass <- pbp_ProjectPlays %>% filter(PriorPass == 1)
+pbp_ProjectPlays_PriorRush <- pbp_ProjectPlays %>% filter(PriorRush == 1)
+
+pbp_ProjectPlays_NotFirstPlay <- pbp_ProjectPlays %>% filter(FirstPlayOfDrive != 1)
+mean(pbp_ProjectPlays_NotFirstPlay$pass)
+mean(pbp_ProjectPlays_NotFirstPlay$xpass)
+mean(pbp_ProjectPlays_FirstPlayOfDrive$pass)
+mean(pbp_ProjectPlays_FirstPlayOfDrive$xpass)
+mean(pbp_ProjectPlays_PriorPass$pass)
+mean(pbp_ProjectPlays_PriorPass$xpass)
+mean(pbp_ProjectPlays_PriorRush$pass)
+mean(pbp_ProjectPlays_PriorRush$xpass)
+
+# Include some T-Tests
+t.test(pbp_ProjectPlays_PriorPass$pass, pbp_ProjectPlays_PriorRush$pass)
+t.test(pbp_ProjectPlays_PriorPass$xpass, pbp_ProjectPlays_PriorRush$xpass)
+mean(pbp_ProjectPlays_PriorPass$pass)
+mean(pbp_ProjectPlays_PriorPass$xpass)
+t.test(pbp_ProjectPlays_PriorPass$pass, pbp_ProjectPlays_PriorPass$xpass)
+mean(pbp_ProjectPlays_PriorPass$PlaySwitch)
+mean(pbp_ProjectPlays_PriorPass$Exp_SwitchRate)
+t.test(pbp_ProjectPlays_PriorPass$PlaySwitch, pbp_ProjectPlays_PriorPass$Exp_SwitchRate)
+mean(pbp_ProjectPlays_PriorRush$pass)
+mean(pbp_ProjectPlays_PriorRush$xpass)
+t.test(pbp_ProjectPlays_PriorRush$pass, pbp_ProjectPlays_PriorRush$xpass)
+mean(pbp_ProjectPlays_PriorRush$PlaySwitch)
+mean(pbp_ProjectPlays_PriorRush$Exp_SwitchRate)
+t.test(pbp_ProjectPlays_PriorRush$PlaySwitch, pbp_ProjectPlays_PriorRush$Exp_SwitchRate)
+
+mean(pbp_ProjectPlays_FirstPlayOfDrive$pass_oe)
+mean(pbp_ProjectPlays_PriorPass$pass_oe)
+mean(pbp_ProjectPlays_PriorRush$pass_oe)
+t.test(pbp_ProjectPlays_PriorPass$pass_oe, pbp_ProjectPlays_PriorRush$pass_oe)
+
+ProjPlays_PriorPassVsRush <- pbp_ProjectPlays %>%
+  group_by(PriorPlayType) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe))
+
+# C.I.'s omitted here b/c they are negligible
+ProjPlays_PriorPassVsRush %>%
+  ggplot(aes(x = PriorPlayType, y = PassRate)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Preceding Play Type", y = "Pass Rate",
+       title = "Pass Rate Based on Whether Prior Play was a Pass",
+       subtitle = "2006-2021 NFL Seasons (n = 559019)",
+       caption = "Data from nflfastR") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+ProjPlays_PriorPassVsRush %>%
+  ggplot(aes(x = PriorPlayType, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Preceding Play Type", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Whether Prior Play was a Pass",
+       subtitle = "2006-2021 NFL Seasons (n = 559019)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+# Build logistic regression model, compare it to xpass via RMSE
+ProjectPlays_ADJXPass_BinomialLM <- glm(pass ~ xpass + PriorPlayType - 1,
+                                        family = binomial, pbp_ProjectPlays) 
+summary(ProjectPlays_ADJXPass_BinomialLM)$coefficients
+
+ProjectPlays_ADJXPass_BinomialLM_Prediction <- predict(ProjectPlays_ADJXPass_BinomialLM, 
+                                                       newdata = pbp_ProjectPlays,
+                                                       type = "response")
+
+ProjectPlays_ADJXPass_Error <- 
+  pbp_ProjectPlays$pass - ProjectPlays_ADJXPass_BinomialLM_Prediction
+ProjectPlays_ActualXPassError <- pbp_ProjectPlays$pass - pbp_ProjectPlays$xpass
+
+sd(ProjectPlays_ADJXPass_Error, na.rm = TRUE)
+sd(ProjectPlays_ActualXPassError, na.rm = TRUE)
+mean(ProjectPlays_ADJXPass_Error, na.rm = TRUE)
+mean(ProjectPlays_ActualXPassError, na.rm = TRUE)
+sqrt(mean((ProjectPlays_ADJXPass_Error)^2, na.rm = TRUE))
+sqrt(mean((ProjectPlays_ActualXPassError)^2, na.rm = TRUE))
+
+# Section 2: Graphs based on success of prior play
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorEPASuccess_CAT =
+                                                  ifelse(FirstPlayOfDrive == 1, "N/A (Start of Drive)", 
+                                                         ifelse(lag(epa) > 0, "Yes", "No")))
+
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(PriorType_EPASuccess_Combo =
+                                                  ifelse(FirstPlayOfDrive == 1, "N/A (Start of Drive)", 
+                                                         ifelse(lag(epa) > 0 & lag(pass) == 1, "Pass Success", 
+                                                                ifelse(lag(epa) > 0 & lag(pass) == 0, "Rush Success",
+                                                                       ifelse(lag(epa) <= 0 & lag(pass) == 1, "Pass Failure", "Rush Failure")))))
+
+pbp_ProjectPlays_PriorEPASuccess <- pbp_ProjectPlays %>% filter(PriorEPASuccess == 1)
+pbp_ProjectPlays_PriorEPAFailure <- pbp_ProjectPlays %>% filter(PriorEPASuccess == 0)
+
+pbp_ProjectPlays_PriorPassEPASuccess <- pbp_ProjectPlays_PriorPass %>% filter(PriorEPASuccess == 1)
+pbp_ProjectPlays_PriorRushEPASuccess <- pbp_ProjectPlays_PriorRush %>% filter(PriorEPASuccess == 1)
+pbp_ProjectPlays_PriorPassEPAFailure <- pbp_ProjectPlays_PriorPass %>% filter(PriorEPASuccess == 0)
+pbp_ProjectPlays_PriorRushEPAFailure <- pbp_ProjectPlays_PriorRush %>% filter(PriorEPASuccess == 0)
+
+mean(pbp_ProjectPlays$PlaySwitch, na.rm = TRUE)
+mean(pbp_ProjectPlays_PriorEPASuccess$PlaySwitch, na.rm = TRUE)
+mean(pbp_ProjectPlays_PriorEPAFailure$PlaySwitch, na.rm = TRUE)
+mean(pbp_ProjectPlays$switchrate_OE, na.rm = TRUE)
+mean(pbp_ProjectPlays_PriorEPASuccess$switchrate_OE, na.rm = TRUE)
+mean(pbp_ProjectPlays_PriorEPAFailure$switchrate_OE, na.rm = TRUE)
+
+# Include T-tests
+t.test(pbp_ProjectPlays_PriorEPASuccess$pass_oe, pbp_ProjectPlays_PriorEPAFailure$pass_oe)
+t.test(pbp_ProjectPlays_PriorEPASuccess$PlaySwitch, pbp_ProjectPlays_PriorEPAFailure$PlaySwitch)
+t.test(pbp_ProjectPlays_PriorEPASuccess$switchrate_OE, pbp_ProjectPlays_PriorEPAFailure$switchrate_OE)
+t.test(pbp_ProjectPlays_PriorPassEPASuccess$pass_oe, pbp_ProjectPlays_PriorPassEPAFailure$pass_oe)
+t.test(pbp_ProjectPlays_PriorRushEPASuccess$pass_oe, pbp_ProjectPlays_PriorRushEPAFailure$pass_oe)
+t.test(pbp_ProjectPlays_PriorPassEPASuccess$pass_oe, pbp_ProjectPlays_PriorRushEPASuccess$pass_oe)
+t.test(pbp_ProjectPlays_PriorPassEPAFailure$pass_oe, pbp_ProjectPlays_PriorRushEPAFailure$pass_oe)
+
+ProjPlays_YesVsNo_EPASuccess <- pbp_ProjectPlays %>%
+  group_by(PriorEPASuccess_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+ProjPlays_YesVsNo_EPASuccess_Combo <- pbp_ProjectPlays %>%
+  group_by(PriorType_EPASuccess_Combo) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch), SwitchRate_OE = mean(switchrate_OE),
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+ProjPlays_YesVsNo_EPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = SwitchRate)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Was Prior Play Successful (via positive EPA)?", y = "Switch Rate",
+       title = "Rate of Offense Switching Play Type Based on Success of Prior Play",
+       subtitle = "2006-2021 NFL Seasons (n = 463567)",
+       caption = "Data from nflfastR") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+ProjPlays_YesVsNo_EPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = SwitchRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Was Prior Play Successful (via positive EPA)?", y = "Switch Rate Over Expected",
+       title = "Offense's Switch Rate Over Expected, Based on Success of Prior Play",
+       subtitle = "2006-2021 NFL Seasons (n = 463567)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_SwitchOE , ymax = UCI_SwitchOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+# Re-create these subsets to account for new variables added (e.g. "Combo")
+rm(pbp_ProjectPlays_PriorPass, pbp_ProjectPlays_PriorRush)
+pbp_ProjectPlays_PriorPass <- pbp_ProjectPlays %>% filter(PriorPass == 1)
+pbp_ProjectPlays_PriorRush <- pbp_ProjectPlays %>% filter(PriorRush == 1)
+
+PriorRush_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorRush %>%
+  group_by(PriorEPASuccess_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+PriorRush_YesVsNo_EPASuccess %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Was Prior Play Successful (via positive EPA)?", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Whether Prior Play was Successful",
+       subtitle = "When Prior Play was a Rush, 2006-2021 Seasons (n = 198890)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+PriorPass_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorPass %>%
+  group_by(PriorEPASuccess_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+PriorPass_YesVsNo_EPASuccess %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Was Prior Play Successful (via positive EPA)?", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Whether Prior Play was Successful",
+       subtitle = "When Prior Play was a Pass, 2006-2021 Seasons (n = 264677)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+PriorEPASuccess_PassVsRush <- pbp_ProjectPlays_PriorEPASuccess %>%
+  group_by(PriorPlayType) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+PriorEPASuccess_PassVsRush %>%
+  ggplot(aes(x = PriorPlayType, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Prior Play Type", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Prior Play Type",
+       subtitle = "When Prior Play had Positive EPA, 2006-2021 Seasons (n = 217397)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+# Key observation: Even after a success, PassRateOE is lower when preceding play was pass
+
+PriorEPAFailure_PassVsRush <- pbp_ProjectPlays_PriorEPAFailure %>%
+  group_by(PriorPlayType) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+PriorEPAFailure_PassVsRush %>%
+  ggplot(aes(x = PriorPlayType, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Prior Play Type", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Prior Play Type",
+       subtitle = "When Prior Play Did Not Have Positive EPA, 2006-2021 Seasons (n = 246170)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+# Predictably, if prior play is failure, PassRateOE is lower when preceding play was pass
+
+ProjPlays_YesVsNo_EPASuccess_Combo %>% 
+  ggplot(aes(x = PriorType_EPASuccess_Combo, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Prior Play Type and Result (Based on EPA)", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected Based on Prior Play Type and Result",
+       subtitle = "2006-2021 NFL Seasons (n = 559019)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+# Section 3: Graphs describing 1st and 10 situations
+
+# Reason for below distinction is situation like TD + onside kick recovery
+ProjPlays_1stAnd10_ComingOffConversion <- pbp_ProjectPlays %>% 
+  filter(lag(first_down) == 1, lag(NewDrive) == NewDrive, down == 1, ydstogo == 10)
+ProjPlays_1stAnd10_PriorPassConv <- ProjPlays_1stAnd10_ComingOffConversion %>% 
+  filter(PriorPass == 1)
+ProjPlays_1stAnd10_PriorRushConv <- ProjPlays_1stAnd10_ComingOffConversion %>% 
+  filter(PriorRush == 1)
+ProjPlays_1stAnd10_StartOfDrive <- pbp_ProjectPlays %>%
+  filter(down == 1, ydstogo == 10, FirstPlayOfDrive == 1)
+ProjPlays_1stAnd10_SingleDrive <- rbind(ProjPlays_1stAnd10_ComingOffConversion, ProjPlays_1stAnd10_StartOfDrive)
+
+# Include T-tests
+t.test(ProjPlays_1stAnd10_PriorPassConv$pass_oe, ProjPlays_1stAnd10_PriorRushConv$pass_oe)
+
+ProjPlays_1stAnd10_PriorPassVsRush <- ProjPlays_1stAnd10_SingleDrive %>%
+  group_by(PriorPlayType) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
+
+ProjPlays_1stAnd10_PriorPassVsRush %>%
+  ggplot(aes(x = PriorPlayType, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Prior Play Type", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected On 1st and 10, Based on Prior Play Type",
+       subtitle = "2006-2021 NFL Seasons (n = 221034)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+
+# Section 4: Graphs discussing short-yardage scenarios
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays %>%
+  filter(yardline_100 <= 2 | (down > 3 & ydstogo <= 2))
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>%
+  select(-"FirstPlayOfDrive", -"LastPlayOfDrive", -"FirstPlayOfSeries", -"LastPlayOfSeries",
+         -"PriorPass", -"PriorRush", -"PriorPlayType", -"PriorEPASuccess", -"PriorWPASuccess",
+         -"PlaySwitch", -"Exp_SwitchRate", -"switchrate_OE",
+         -"PriorEPASuccess_CAT", -"PriorWPASuccess_CAT", -"PriorType_EPASuccess_Combo", -"PriorType_WPASuccess_Combo")
+
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% 
+  group_by(game_id, NewDrive) %>% 
+  mutate(FirstSY_PlayOfDrive = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% 
+  group_by(game_id, NewDrive) %>% 
+  mutate(LastSY_PlayOfDrive = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% 
+  group_by(game_id, NewSeries) %>% 
+  mutate(FirstSY_PlayOfSeries = as.numeric(play_id == min(play_id))) %>% 
+  ungroup()
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% 
+  group_by(game_id, NewSeries) %>% 
+  mutate(LastSY_PlayOfSeries = as.numeric(play_id == max(play_id))) %>% 
+  ungroup()
+
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(PriorSY_Pass =
+                              ifelse(FirstSY_PlayOfSeries == 1, NA, 
+                                    ifelse(lag(pass) == 1, 1, 0)))
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(PriorSY_Rush =
+                              ifelse(FirstSY_PlayOfSeries== 1, NA, 
+                                    ifelse(lag(rush) == 1, 1, 0)))
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(PriorSY_PlayType =
+                              ifelse(FirstSY_PlayOfSeries == 1, "N/A (1st SY Play of Series)", 
+                                    ifelse(lag(pass) == 1, "Pass", "Rush")))
+
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(SY_PlaySwitch =
+                              ifelse(FirstSY_PlayOfSeries == 1, NA, 
+                                    ifelse(pass != lag(pass), 1, 0)))
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(SY_Exp_SwitchRate =
+                              ifelse(FirstSY_PlayOfSeries == 1, NA, 
+                                    ifelse(lag(pass) == 1, 1 - xpass, xpass)))
+pbp_ProjectPlays_ShortYardage <- pbp_ProjectPlays_ShortYardage %>% mutate(SY_switchrate_OE =
+                              ifelse(FirstSY_PlayOfSeries == 1, NA, 
+                                    ifelse(SY_PlaySwitch == 1, 100 * (1 - SY_Exp_SwitchRate), 100 * (-1 * SY_Exp_SwitchRate))))
+
+ShortYardage_PriorPass <- pbp_ProjectPlays_ShortYardage %>% filter(PriorSY_Pass == 1)
+ShortYardage_PriorRush <- pbp_ProjectPlays_ShortYardage %>% filter(PriorSY_Rush == 1)
+
+# Include SY T-tests
+t.test(ShortYardage_PriorPass$pass_oe, ShortYardage_PriorRush$pass_oe)
+
+ShortYardage_PriorPlayType <- pbp_ProjectPlays_ShortYardage %>%
+  group_by(PriorSY_PlayType) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(SY_PlaySwitch), LCI_Switch = lower_Bernoulli(SY_PlaySwitch), UCI_Switch = upper_Bernoulli(SY_PlaySwitch),
+            SwitchRate_OE = mean(SY_switchrate_OE),
+            LCI_SwitchOE = lower_Continuous(SY_switchrate_OE), UCI_SwitchOE = upper_Continuous(SY_switchrate_OE))
+
+ShortYardage_PriorPlayType %>%
+  ggplot(aes(x = PriorSY_PlayType, y = PassRate_OE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_abline(intercept = 0, slope = 0, color = "red") +
+  labs(x = "Prior Short-Yardage Play Type", y = "Pass Rate Over Expected",
+       title = "Pass Rate Over Expected On Short-Yardage Plays",
+       subtitle = "Based on Prior Short-Yardage Play Type On That Series, 2006-2021 (n = 13436)",
+       caption = "Data from nflfastR") +
+  geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
