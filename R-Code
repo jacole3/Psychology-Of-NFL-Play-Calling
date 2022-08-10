@@ -787,7 +787,7 @@ pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(switchrate_OE =
                                                   ifelse(FirstPlayOfDrive == 1, NA, 
                                                          ifelse(PlaySwitch == 1, 100 * (1 - Exp_SwitchRate), 100 * (-1 * Exp_SwitchRate))))
 
-pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(EnsuingPlayType_CAT =
+pbp_ProjectPlays <- pbp_ProjectPlays %>% mutate(CurrentPlayType_CAT =
         ifelse(pass == 1, "Pass", "Rush"))
         
 # Section 1: graphs of all Project Plays in general
