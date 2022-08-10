@@ -709,6 +709,18 @@ pbp_NoPATsOrSpecials_Since2006 <- pbp %>% filter(season >= 2006) %>%
 pbp_NoPATsOrSpecials_Since2006 <- pbp_NoPATsOrSpecials_Since2006 %>% filter(special == 0)
 pbp_NoPATsOrSpecials_Since2006 <- pbp_NoPATsOrSpecials_Since2006 %>%
   filter(pass == 1 | rush == 1)
+pbp_NoPATsOrSpecials_Since2006$play_id <- 1:nrow(pbp_NoPATsOrSpecials_Since2006)
+
+# Fix plays that wrongly have NA in "success" column
+Success_NA_Label <- pbp_NoPATsOrSpecials_Since2006 %>% filter(is.na(success))
+Success_NA_Label_ID <- Success_NA_Label$play_id
+Success_NA_Label_ShouldBeSuccess <- Success_NA_Label %>% filter(epa > 0)
+Success_NA_Label_ShouldBeSuccess_ID <- Success_NA_Label_ShouldBeSuccess$play_id
+pbp_NoPATsOrSpecials_Since2006[Success_NA_Label_ShouldBeSuccess_ID, "success"] <- 1
+Success_NA_Label_ShouldBeFailure <- Success_NA_Label %>% filter(epa <= 0)
+Success_NA_Label_ShouldBeFailure_ID <- Success_NA_Label_ShouldBeFailure$play_id
+pbp_NoPATsOrSpecials_Since2006[Success_NA_Label_ShouldBeFailure_ID, "success"] <- 0
+
 
 pbp_ProjectPlays <- pbp_NoPATsOrSpecials_Since2006
 pbp_ProjectPlays$play_id <- 1:nrow(pbp_ProjectPlays)
