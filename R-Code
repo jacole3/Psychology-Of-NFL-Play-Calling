@@ -916,7 +916,7 @@ t.test(pbp_ProjectPlays_PriorRushEPASuccess$pass_oe, pbp_ProjectPlays_PriorRushE
 t.test(pbp_ProjectPlays_PriorPassEPASuccess$pass_oe, pbp_ProjectPlays_PriorRushEPASuccess$pass_oe)
 t.test(pbp_ProjectPlays_PriorPassEPAFailure$pass_oe, pbp_ProjectPlays_PriorRushEPAFailure$pass_oe)
 
-ProjPlays_YesVsNo_EPASuccess <- pbp_ProjectPlays %>%
+ProjPlays_YesVsNo_PriorEPASuccess <- pbp_ProjectPlays %>%
   group_by(PriorEPASuccess_CAT) %>%
   summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
             XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
@@ -925,7 +925,7 @@ ProjPlays_YesVsNo_EPASuccess <- pbp_ProjectPlays %>%
             SwitchRate_OE = mean(switchrate_OE), 
             LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
 
-ProjPlays_YesVsNo_EPASuccess_Combo <- pbp_ProjectPlays %>%
+ProjPlays_YesVsNo_PriorEPASuccess_Combo <- pbp_ProjectPlays %>%
   group_by(PriorType_EPASuccess_Combo) %>%
   summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
             XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
@@ -933,7 +933,7 @@ ProjPlays_YesVsNo_EPASuccess_Combo <- pbp_ProjectPlays %>%
             SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch), SwitchRate_OE = mean(switchrate_OE),
             LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
 
-ProjPlays_YesVsNo_EPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+ProjPlays_YesVsNo_PriorEPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
   ggplot(aes(x = PriorEPASuccess_CAT, y = SwitchRate)) +
   geom_bar(stat = "identity", position = "dodge") +
   labs(x = "Was Prior Play Successful (via positive EPA)?", y = "Switch Rate",
@@ -943,7 +943,7 @@ ProjPlays_YesVsNo_EPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No"))
   theme(plot.title = element_text(size = 10, hjust = 0.5),
         plot.subtitle = element_text(size = 8, hjust = 0.5))
 
-ProjPlays_YesVsNo_EPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+ProjPlays_YesVsNo_PriorEPASuccess %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
   ggplot(aes(x = PriorEPASuccess_CAT, y = SwitchRate_OE)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_abline(intercept = 0, slope = 0, color = "red") +
@@ -960,7 +960,7 @@ rm(pbp_ProjectPlays_PriorPass, pbp_ProjectPlays_PriorRush)
 pbp_ProjectPlays_PriorPass <- pbp_ProjectPlays %>% filter(PriorPass == 1)
 pbp_ProjectPlays_PriorRush <- pbp_ProjectPlays %>% filter(PriorRush == 1)
 
-PriorRush_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorRush %>%
+PriorRush_YesVsNo_PriorEPASuccess <- pbp_ProjectPlays_PriorRush %>%
   group_by(PriorEPASuccess_CAT) %>%
   summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
             XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
@@ -969,7 +969,7 @@ PriorRush_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorRush %>%
             SwitchRate_OE = mean(switchrate_OE), 
             LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
 
-PriorRush_YesVsNo_EPASuccess %>%
+PriorRush_YesVsNo_PriorEPASuccess %>%
   ggplot(aes(x = PriorEPASuccess_CAT, y = PassRate_OE)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_abline(intercept = 0, slope = 0, color = "red") +
@@ -981,7 +981,7 @@ PriorRush_YesVsNo_EPASuccess %>%
   theme(plot.title = element_text(size = 10, hjust = 0.5),
         plot.subtitle = element_text(size = 8, hjust = 0.5))
 
-PriorPass_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorPass %>%
+PriorPass_YesVsNo_PriorEPASuccess <- pbp_ProjectPlays_PriorPass %>%
   group_by(PriorEPASuccess_CAT) %>%
   summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
             XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
@@ -990,7 +990,7 @@ PriorPass_YesVsNo_EPASuccess <- pbp_ProjectPlays_PriorPass %>%
             SwitchRate_OE = mean(switchrate_OE), 
             LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE))
 
-PriorPass_YesVsNo_EPASuccess %>%
+PriorPass_YesVsNo_PriorEPASuccess %>%
   ggplot(aes(x = PriorEPASuccess_CAT, y = PassRate_OE)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_abline(intercept = 0, slope = 0, color = "red") +
@@ -1046,7 +1046,7 @@ PriorEPAFailure_PassVsRush %>%
         plot.subtitle = element_text(size = 8, hjust = 0.5))
 # Predictably, if prior play is failure, PassRateOE is lower when preceding play was pass
 
-ProjPlays_YesVsNo_EPASuccess_Combo %>% 
+ProjPlays_YesVsNo_PriorEPASuccess_Combo %>% 
   ggplot(aes(x = PriorType_EPASuccess_Combo, y = PassRate_OE)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_abline(intercept = 0, slope = 0, color = "red") +
