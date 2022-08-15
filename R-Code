@@ -381,9 +381,18 @@ pbp <- pbp %>% group_by(game_id) %>%
   mutate(LastPlayOfGame = as.numeric(play_id == max(play_id))) %>% 
   ungroup()
 
-Wrong_EPA_Label <- pbp %>% filter(is.na(epa) & play_type != "qb_kneel" & LastPlayOfGame == 1 & score_differential == score_differential_post)
-Wrong_EPA_Label_ID <- Wrong_EPA_Label$play_id
-pbp[Wrong_EPA_Label_ID, "epa"] <- (-1 * pbp[Wrong_EPA_Label_ID, "ep"])
+# View(pbp %>% filter(is.na(epa) & play_type != "qb_kneel"))
+# All are non-scoring and final play of game
+Wrong_EPA_Label <- pbp %>% filter(is.na(epa) & play_type != "qb_kneel")
+Wrong_EPA_Label_CorrectEP <- Wrong_EPA_Label %>% filter(!is.na(ep))
+Wrong_EPA_Label_CorrectEP_ID <- Wrong_EPA_Label_CorrectEP$play_id
+pbp[Wrong_EPA_Label_CorrectEP_ID, "epa"] <- (-1 * pbp[Wrong_EPA_Label_CorrectEP_ID, "ep"])
+
+Wrong_EPA_Label_WrongEP <- Wrong_EPA_Label %>% filter(is.na(ep))
+Wrong_EPA_Label_WrongEP_ID <- Wrong_EPA_Label_WrongEP$play_id
+Wrong_EPA_Label_WrongEP_PriorPlay_ID <- Wrong_EPA_Label_WrongEP$play_id - 1
+pbp[Wrong_EPA_Label_WrongEP_ID, "ep"] <- (pbp[Wrong_EPA_Label_WrongEP_PriorPlay_ID, "ep"]) + (pbp[Wrong_EPA_Label_WrongEP_PriorPlay_ID, "epa"])
+pbp[Wrong_EPA_Label_WrongEP_ID, "epa"] <- (-1 * pbp[Wrong_EPA_Label_WrongEP_ID, "ep"])
 
 pbp <- pbp %>% mutate(posteam_win = 
                         case_when(
