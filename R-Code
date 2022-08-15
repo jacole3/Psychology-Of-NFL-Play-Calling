@@ -150,6 +150,11 @@ ShouldBeLabeledAsKneel2Vec <- ShouldBeLabeledAsKneel2$play_id
 pbp[ShouldBeLabeledAsKneel2Vec, "play_type"] <- "qb_kneel"
 pbp[ShouldBeLabeledAsKneel2Vec, "qb_kneel"] <- 1
 
+# Kneeldown we can manually fix
+# View(pbp %>% filter(game_id == "1999_11_STL_SF", qtr == 4))
+pbp[25963, "play_type"] <- "qb_kneel"
+pbp[25963, "qb_kneel"] <- 1
+
 ShouldBeLabeledAsSpike <- pbp %>% filter(play_type == "pass" & (str_detect(desc, "(spike)")))
 ShouldBeLabeledAsSpikeVec <- ShouldBeLabeledAsSpike$play_id
 pbp[ShouldBeLabeledAsSpikeVec, "play_type"] <- "qb_spike"
