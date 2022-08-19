@@ -1185,3 +1185,90 @@ ShortYardage_PriorPlayType %>%
   geom_errorbar(aes(ymin = LCI_PassOE , ymax = UCI_PassOE), position = "dodge") +
   theme(plot.title = element_text(size = 10, hjust = 0.5),
         plot.subtitle = element_text(size = 8, hjust = 0.5))
+        
+# Addendum to see if switching plays has generally been a good strategy
+ProjPlays_PriorPassVsRush_AddendumVersion <- pbp_ProjectPlays %>%
+  group_by(PriorPlayType, CurrentPlayType_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SuccessRate = mean(success), LCI_Success = lower_Bernoulli(success), UCI_Success = upper_Bernoulli(success))
+ProjPlays_PriorPassVsRush_AddendumVersion <- ProjPlays_PriorPassVsRush_AddendumVersion %>%
+  select(c(-"PassRate", -"LCI_Pass", -"UCI_Pass"))
+
+ProjPlays_PriorPassVsRush_AddendumVersion %>%
+  ggplot(aes(x = CurrentPlayType_CAT, y = SuccessRate, fill = PriorPlayType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Current Play Type", y = "Success Rate of Current Play (via EPA)",
+       title = "Offense's Success Rate Based on Current and Prior Play Type",
+       subtitle = "2006-2021 NFL Seasons (n = 559019)",
+       caption = "Data from nflfastR",
+       fill = "Prior Play Type") +
+  geom_errorbar(aes(ymin = LCI_Success , ymax = UCI_Success), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.5))
+# Interesting observation: passes are particularly successful on first play of drive
+# Also notable b/c xpass is lowest for opening play of drive
+
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion1 <- pbp_ProjectPlays %>%
+  group_by(PriorEPASuccess_CAT, PlaySwitch_CAT, CurrentPlayType_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE),
+            SuccessRate = mean(success), LCI_Success = lower_Bernoulli(success), UCI_Success = upper_Bernoulli(success))
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion1 <- ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion1 %>%
+  select(c(-"PassRate", -"LCI_Pass", -"UCI_Pass", -"SwitchRate", -"LCI_Switch", -"UCI_Switch"))
+
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion1 %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = SuccessRate, fill = PlaySwitch_CAT)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Was Prior Play Successful? (via EPA)", y = "Current Play's Success Rate (via EPA)",
+       title = "Offense's Success Rate on Current Play",
+       subtitle = "Based on Whether It Switched Play Types, 2006-2021 (n = 463567)",
+       caption = "Data from nflfastR",
+       fill = "Did Offense Switch Play Type?") +
+  geom_errorbar(aes(ymin = LCI_Success , ymax = UCI_Success), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.3)) + 
+  facet_wrap(~CurrentPlayType_CAT)
+
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion2 <- pbp_ProjectPlays %>%
+  group_by(PriorEPASuccess_CAT, PlaySwitch_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch),
+            SwitchRate_OE = mean(switchrate_OE), 
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE),
+            SuccessRate = mean(success), LCI_Success = lower_Bernoulli(success), UCI_Success = upper_Bernoulli(success))
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion2 <- ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion2 %>%
+  select(c(-"SwitchRate", -"LCI_Switch", -"UCI_Switch"))
+# View(ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion2)
+
+ProjPlays_YesVsNo_PriorEPASuccess_AddendumVersion2 %>% filter(PriorEPASuccess_CAT %in% c("Yes", "No")) %>%
+  ggplot(aes(x = PriorEPASuccess_CAT, y = SuccessRate, fill = PlaySwitch_CAT)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Was Prior Play Successful? (via EPA)", y = "Current Play's Success Rate (via EPA)",
+       title = "Offense's Success Rate on Current Play",
+       subtitle = "Based on Whether It Switched Play Types, 2006-2021 (n = 463567)",
+       caption = "Data from nflfastR",
+       fill = "Did Offense Switch Play Type?") +
+  geom_errorbar(aes(ymin = LCI_Success , ymax = UCI_Success), position = "dodge") +
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        plot.subtitle = element_text(size = 8, hjust = 0.3))
+
+ProjPlays_YesVsNo_PriorEPASuccess_Combo_AddendumVersion <- pbp_ProjectPlays %>%
+  group_by(PriorType_EPASuccess_Combo, CurrentPlayType_CAT) %>%
+  summarize(n = n(), PassRate = mean(pass), LCI_Pass = lower_Bernoulli(pass), UCI_Pass = upper_Bernoulli(pass),
+            XPassRate = mean(xpass), PassRate_OE = mean(pass_oe), 
+            LCI_PassOE = lower_Continuous(pass_oe), UCI_PassOE = upper_Continuous(pass_oe),
+            SwitchRate = mean(PlaySwitch), LCI_Switch = lower_Bernoulli(PlaySwitch), UCI_Switch = upper_Bernoulli(PlaySwitch), SwitchRate_OE = mean(switchrate_OE),
+            LCI_SwitchOE = lower_Continuous(switchrate_OE), UCI_SwitchOE = upper_Continuous(switchrate_OE),
+            SuccessRate = mean(success), LCI_Success = lower_Bernoulli(success), UCI_Success = upper_Bernoulli(success))
+ProjPlays_YesVsNo_PriorEPASuccess_Combo_AddendumVersion <- ProjPlays_YesVsNo_PriorEPASuccess_Combo_AddendumVersion %>%
+  select(c(-"PassRate", -"LCI_Pass", -"UCI_Pass"))
+
+
